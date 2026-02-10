@@ -1,64 +1,85 @@
 #include "macro.S"
-#define TRAP_FRAME  \
+#define TRAP_FRAME  \         /* not used */
         .section .bss; \
         .align 6; .global trap_frame; trap_frame: .space 256;   
 #define RVTEST_DATA_BEGIN                                               \
         .pushsection .tohost,"aw",@progbits;                            \
         .align 6; .global tohost; tohost: .dword 0; .size tohost, 8;    \
         .align 6; .global fromhost; fromhost: .dword 0; .size fromhost, 8;\
-        .popsection;                                                    \
-        .align 4; .global begin_signature; begin_signature:
+        .popsection;                                       
 #define RVTEST_CODE_BEGIN                                               \
         .section .text.init;                                            \
         .align  6;                                                      \
-        .global _start;                         
+        .global _start;  
+RVTEST_CODE_BEGIN                         
 _start:                                 
-    la sp, _sstack  /* initialized the stack */
-    la t1, trap_vector       /* trap handler runs in M-mode/No delegation is used */
-    csrw mtvec, t1           /* set mtvec to point to trap_vector */
-    # la t0, trap_frame   
-    # csrw mscratch , t0  /* this is not used instead macro.S */
-                            /* uses mscratch to point to the trap frame and save/restore registers directly from/to mscratch */
-    j main               /* jump to main test code */
+    la sp, _sstack           /* initialized the stack */
+    la t6, trap_vector       /* trap handler runs in M-mode/No delegation is used */
+    csrw mtvec, t6           /* set mtvec to point to trap_vector */
+    la t5, begin_signature     /* load address of signature region base to t5, trap handlers will use t5 to write test results */
+    j main                   /* jump to main test code */
 trap_vector: 
     SAVE_REGS                  /* save all registers to the trap frame pointed to by mscratch */                                         
-    csrr t0, mcause        /* read mcause to determine the cause of the trap */
+    csrr t0, mcause            /* read mcause to determine the cause of the trap */
     slli t0, t0, 1       
-    srli t0, t0, 1        /* shift left and right to discard the MSB(interrupt) bit */
-    li t1, 8             /* ECALL from U-mode mcause = 8 */
-    li t2, 9             /* ECALL from S-mode mcause =  9 */
+    srli t0, t0, 1             /* shift left and right to discard the MSB(interrupt) bit */
+    li t1, 8                   /* ECALL from U-mode mcause = 8 */
+    li t2, 9                   /* ECALL from S-mode mcause =  9 */
     beq t0, t1, u_trap_handler     /* if ECALL from U-mode, jump to handle_ecall_u */
     beq t0, t2, s_trap_handler     /* if ECALL from S-mode, jump to handle_ecall_s */
-    j unknown_trap         /* if trap cause is unexpected, jump to unknown_trap */
+
+    j unknown_trap             /* if trap cause is unexpected, jump to unknown_trap */
 
 main:
     .align 6
-    la t3, begin_signature  /* load address of begin_signature to t3 */
-    li t4, 0                 /* test counter = 0 */
-    sw t4, 0(t3)             /* write test counter value to begin_signature */
-    sw zero, 4(t3)          /* pass count in begin signature */
-    sw zero, 8(t3)          /* fail count in begin signature */
-    /* Test 1: Switch to S-mode and execute ECALL */
-    li t4, 1                 /* set test counter = 1 */
-    sw t4, 0(t3)             /* write test counter value to begin_signature */
-    li a0, 0                 /* set argument a0 = 0 switch to S-mode/ a0 = 1 switch to U-mode */
-    jal switch_mode          /* jump to switch_mode to switch to the desired mode and execute ECALL */
-    lw t4, 4(t3)             /* load pass count */
-    addi t4, t4, 1           /* increment pass count */
-    sw t4, 4(t3)             /* write back pass count */
-    ecall                     /* ecall in s-mode, should trap to M-mode and handled by s_trap_handler which will switch to S-mode and return to main */
-    lw t4, 4(t3)             /* load pass count */
-    addi t4, t4, 1           /* increment pass count */
-    sw t4, 4(t3)             /* write back pass count */
+    li a0, 3
+    jal verify_m_mode          /* verify we are in M-mode at the beginning of main */
+    li a0, 0                   /* set argument a0 = 0 switch to S-mode/ a0 = 1 switch to U-mode */
+    jal switch_mode            /* jump to switch_mode to switch to the desired mode and execute ECALL */
+    li a0, 1                   /* set argument a0 = 1 to verify S-mode */
+    jal verify_s_mode          /* this will only execute successfully if we switched to S-mode, otherwise it will trap or fail */
+    ecall                      /* ecall in s-mode, should trap to M-mode and handled by s_trap_handler which will switch to S-mode and return to main */
+
     li a0, 1                 /* set argument a0 = 1 to switch to U-mode */
     jal switch_mode          /* jump to switch_mode to switch to U-mode and execute ECALL */
-    lw t4, 4(t3)             /* load pass count */
-    addi t4, t4, 1           /* increment pass count */
-    sw t4, 4(t3)             /* write back pass count */
-    ecall                    /*ecall in u-mode
+    li a0, 0                 /* set argument a0 = 0 to verify U-mode */
+    jal verify_u_mode              /* this will only execute and write the current mode in signature file */
+    ecall                    /*ecall in u-mode */
+    ecall                    /* back in machine mode */
+    /* test switching in u-mode from s-mode */
+    li a0, 0                 /* set argument a0 = 0 to switch back to S-mode */
+    jal switch_mode          /* jump to switch_mode to switch back to S-mode */
+    jal u_mode_switch        /* this will only execute successfully if we switched to U-mode, otherwise it will trap or fail */
+    ecall                    /* ecall in s-mode, should trap to M-mode and handled by s_trap_handler which will switch to S-mode and return to main */
+    ecall                    /* back in machine mode */
     
-    /* End of tests */
-    j write_tohost            /* if execution continues after ECALL, write to tohost to indicate failure */
+    j write_tohost            
+
+
+verify_u_mode:
+    csrr t0, mstatus        /* this will trap */
+    ret
+
+/* this label is only succesfully execute in S-Mode otherwise it will trap or fail*/
+verify_s_mode:
+    csrr t0, mstatus        /* this will trap */
+    ret
+/* this label is only succesfully execute in M-Mode otherwise it will trap*/
+verify_m_mode:
+    csrr t0, mstatus        /* read mstatus */
+    li t1, 3                /* expected mode value for M-mode is 3 */
+    sb t1, 0(t5)               /* store expected mode value at the beginning of signature region */
+    ret
+u_mode_switch:
+    mv t1, ra                  /* save return address in t1 */
+    csrw sepc, t1           /* set sepc to return to the instruction after ecall in case of trap */
+    csrr t0, sstatus        /* read sstatus to check if we are in S-mode */
+    li t2, 0                /* mask for SPP bit (bit 8) */
+    slli t2, t2, 8          /* shift to bit 8 */
+    and t0, t0, t2          /* check if SPP bit is 0, which indicates we are in S-mode */
+    csrw sstatus, t0          /* write back sstatus to clear any side effects */
+    sret                     /* return from trap, should switch to U-mode and jump to the instruction after ecall in main */
+
 /* switch_mode: set MPP bits in mstatus and set mepc 
     to desired mode address and jumps to that mode using mret*/
 switch_mode:
@@ -68,10 +89,10 @@ switch_mode:
     slli t1, t1, 11         /* shift to correct position */
     not t1, t1
     and t0, t0, t1          /* clear MPP  */
-    li t5, 1
+    li t3, 1                /* use t3 instead of t5 to avoid corrupting signature base address */
     beq a0, zero, 1f        /* if a0 == 0, switch to S-mode, else switch to U-mode */
-    beq a0, t5, 2f
-    j unknown_trap             /* if a0 is not 0 or 1, jump to unknown_trap */
+    beq a0, t3, 2f
+    j fail             /* if a0 is not 0 or 1, jump to unknown_trap */
 
 
 /* this label write MPP bits to 01 to switch to S-mode
@@ -87,6 +108,7 @@ switch_mode:
     csrw mepc , t6
     csrw mstatus, t0
     mret
+
 /* Trap handler for ECALL from U-mode
     This handler will set MPP to 01 to switch to S-mode and return using mret
     which will cause the processor to switch to S-mode and jump to the instruction after ECALL in main */
@@ -127,17 +149,44 @@ s_trap_handler:
     mret
 
 unknown_trap:
-    la t0, begin_signature
-    lw t1, 8(t0)             /* load fail count */
-    addi t1, t1, 1           /* increment fail count */
-    sw t1, 8(t0)             /* write back fail count */
+    lw t0, 10*4(sp)            /* load the value of a0 which is the argument passed to main, this will indicate which mode we were trying to switch to when the unexpected trap occurred */
+    li t1, 3
+    blt t1, t0, fail            /* if a0 < 3, it means the trap occurred while trying to switch modes, jump to fail */
+    csrr t2, mepc        /* read mepc to get the address of the instruction that caused the trap */
+    addi t2, t2, 4       /* increment mepc to point to the next instruction after the one that caused the trap */
+    csrw mepc, t2
+    csrr t0, mstatus        /* read mstatus to indicate the cause of the unexpected trap */
+    srli t0, t0, 11         /* shift to bits 11:12 */
+    li t1, 3
+    and t1, t0, t1          /* mask mstatus to only get the relevant bits for cause */
+    beqz t1, U              /* if cause is 0, it means we are in M-mode, jump to fail */
+    li t3, 1
+    beq t1, t3, S
+U:
+    sb t0, 2(t5)             /* store the previous mode from which trap has occured */
+    RESTORE_REGS
+    mret                     /* return from trap, should return to the instruction after the one that caused the trap */
+S:
+    sb t0, 1(t5)             /* store the previous mode from which trap has occured */
+    RESTORE_REGS
+    mret                     /* return from trap, should return to the instruction after the one that caused the trap */
+fail:
+    lb t0, 3(t5)             /* load a non-zero value to indicate unknown trap */
+    addi t0, t0, 0xff
+    sb t0, 3(t5)              /* store the value to signature region to */
 
 write_tohost:
     li gp, 1
-    sw gp, tohost, t5
+    la t0, tohost
+    sw gp, 0(t0)              /* write to tohost to finish the test and exit */
     j write_tohost
 
-base:
-.word 0xcafebeef
+# base:
+# .word 0xcafebeef
 RVTEST_DATA_BEGIN
-TRAP_FRAME
+.align 4; .global begin_signature; 
+begin_signature:
+    .fill 4, 1, 0  
+end_signature:
+
+# TRAP_FRAME
