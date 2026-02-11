@@ -9,7 +9,7 @@ SRC := ./src/test.S
 LD_SCRIPT := ./src/link.ld
 .PHONY: build clean run help
 
-all: clean build
+all: clean build run
 
 build:
 	@$(CC) $(C_FLAGS) -T $(LD_SCRIPT) $(SRC) -o ./logs/test.elf 
