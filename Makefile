@@ -16,7 +16,7 @@ build:
 	@$(OBJDUMP) -d ./logs/test.elf > ./logs/test.dis
 
 run:
-	@spike --isa=rv32i -l --log-commits +signature=test.signature.output +signature-granularity=1 ./logs/test.elf >./logs/spike.out 2>./logs/spike.log
+	@spike --isa=rv32i -l --log-commits +signature=./logs/test.signature.output +signature-granularity=1 ./logs/test.elf >./logs/spike.out 2>./logs/spike.log
 
 debug:
 	@spike --isa=rv32i -d ./logs/test.elf

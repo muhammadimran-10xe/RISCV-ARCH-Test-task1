@@ -158,8 +158,8 @@ unknown_trap:
     csrr t0, mstatus        /* read mstatus to indicate the cause of the unexpected trap */
     srli t0, t0, 11         /* shift to bits 11:12 */
     li t1, 3
-    and t1, t0, t1          /* mask mstatus to only get the relevant bits for cause */
-    beqz t1, U              /* if cause is 0, it means we are in M-mode, jump to fail */
+    and t1, t0, t1          /* mask mstatus to only get the relevant bits for mstatus */
+    beqz t1, U              /* if mstatus is 0, it means we are in M-mode, jump to fail */
     li t3, 1
     beq t1, t3, S
 U:
